@@ -700,7 +700,7 @@ func (jwt *JWT) verifyExpiry() error {
 	}
 	ts := time.Now().Unix()
 	if int64(exp) < time.Now().Unix() {
-		return fmt.Errorf("Token has expired (exp: %d < ts: %d) !!!", int(exp), ts)
+		return fmt.Errorf("Token has expired (exp: %d < ts: %d) !!! Please refresh it.", int(exp), ts)
 	}
 
 	return nil
