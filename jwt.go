@@ -39,11 +39,14 @@ type Config struct {
 	Aud           string
 	OpaHeaders    map[string]string
 	JwtHeaders    map[string]string
+	ExpiryCheck   bool
 }
 
 // CreateConfig creates a new OPA Config
 func CreateConfig() *Config {
-	return &Config{}
+	return &Config{
+		ExpiryCheck: false,
+	}
 }
 
 // JwtPlugin contains the runtime config
@@ -60,6 +63,7 @@ type JwtPlugin struct {
 	aud           string
 	opaHeaders    map[string]string
 	jwtHeaders    map[string]string
+	expiryCheck   bool
 }
 
 // LogEvent contains a single log entry
@@ -163,6 +167,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		keys:          make(map[string]interface{}),
 		jwtHeaders:    config.JwtHeaders,
 		opaHeaders:    config.OpaHeaders,
+		expiryCheck:   config.ExpiryCheck,
 	}
 	if err := jwtPlugin.ParseKeys(config.Keys); err != nil {
 		return nil, err
@@ -313,14 +318,33 @@ func (jwtPlugin *JwtPlugin) ServeHTTP(rw http.ResponseWriter, request *http.Requ
 }
 
 func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
+	network := jwtPlugin.remoteAddr(request)
+	sub := ""
+
 	jwtToken, err := jwtPlugin.ExtractToken(request)
 	if err != nil {
 		return err
 	}
 	if jwtToken != nil {
+		sub = fmt.Sprint(jwtToken.Payload["sub"])
+
 		// only verify jwt tokens if keys are configured
 		if len(jwtPlugin.keys) > 0 || len(jwtPlugin.jwkEndpoints) > 0 {
 			if err = jwtPlugin.VerifyToken(jwtToken); err != nil {
+				return err
+			}
+		}
+		if jwtPlugin.expiryCheck {
+			if err = jwtToken.verifyExpiry(); err != nil {
+				jsonLogEvent, _ := json.Marshal(&LogEvent{
+					Level:   "error",
+					Msg:     fmt.Sprintf("Token has expired - err: %s", err.Error()),
+					Time:    time.Now(),
+					Sub:     sub,
+					Network: network,
+					URL:     request.URL.String(),
+				})
+				fmt.Println(string(jsonLogEvent))
 				return err
 			}
 		}
@@ -329,7 +353,6 @@ func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
 				if jwtPlugin.required {
 					return fmt.Errorf("payload missing required field %s", fieldName)
 				} else {
-					sub := fmt.Sprint(jwtToken.Payload["sub"])
 					network := jwtPlugin.remoteAddr(request)
 					jsonLogEvent, _ := json.Marshal(&LogEvent{
 						Level:   "warning",
@@ -663,6 +686,24 @@ func verifyECDSA(key interface{}, _ crypto.Hash, digest []byte, signature []byte
 		return nil
 	}
 	return fmt.Errorf("token verification failed (ECDSA)")
+}
+
+func (jwt *JWT) verifyExpiry() error {
+	_, ok := jwt.Payload["exp"]
+	if !ok {
+		return fmt.Errorf("Token expiry payload field (exp) cannot be found !!!")
+	}
+	expire := fmt.Sprint(jwt.Payload["exp"])
+	exp, err := strconv.ParseFloat(expire, 64)
+	if err != nil {
+		return err
+	}
+	ts := time.Now().Unix()
+	if int64(exp) < time.Now().Unix() {
+		return fmt.Errorf("Token has expired (exp: %d < ts: %d) !!!", int(exp), ts)
+	}
+
+	return nil
 }
 
 // JWKThumbprint creates a JWK thumbprint out of pub
