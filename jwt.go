@@ -29,25 +29,25 @@ import (
 
 // Config the plugin configuration.
 type Config struct {
-	OpaUrl            string
-	OpaAllowField     string
-	PayloadFields     []string
-	Required          bool
-	Keys              []string
-	Alg               string
-	Iss               string
-	Aud               string
-	OpaHeaders        map[string]string
-	JwtHeaders        map[string]string
-	JwtAlwaysRequired bool
-	JwtExpiryCheck    bool
+	OpaUrl           string
+	OpaAllowField    string
+	PayloadFields    []string
+	Required         bool
+	Keys             []string
+	Alg              string
+	Iss              string
+	Aud              string
+	OpaHeaders       map[string]string
+	JwtHeaders       map[string]string
+	JwtAlwaysPresent bool
+	JwtExpiryCheck   bool
 }
 
 // CreateConfig creates a new OPA Config
 func CreateConfig() *Config {
 	return &Config{
-		JwtAlwaysRequired: false,
-		JwtExpiryCheck:    false,
+		JwtAlwaysPresent: false,
+		JwtExpiryCheck:   false,
 	}
 }
 
@@ -171,7 +171,7 @@ func New(_ context.Context, next http.Handler, config *Config, _ string) (http.H
 		jwtHeaders:       config.JwtHeaders,
 		opaHeaders:       config.OpaHeaders,
 		jwtExpiryCheck:   config.JwtExpiryCheck,
-		jwtAlwaysPresent: config.JwtAlwaysRequired,
+		jwtAlwaysPresent: config.JwtAlwaysPresent,
 	}
 	if err := jwtPlugin.ParseKeys(config.Keys); err != nil {
 		return nil, err
@@ -330,7 +330,7 @@ func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
 		return err
 	}
 
-	// JWT token required
+	// JWT token must always be present
 	if jwtToken == nil && jwtPlugin.jwtAlwaysPresent {
 		jsonLogEvent, _ := json.Marshal(&LogEvent{
 			Level:   "error",
