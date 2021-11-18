@@ -29,41 +29,44 @@ import (
 
 // Config the plugin configuration.
 type Config struct {
-	OpaUrl        string
-	OpaAllowField string
-	PayloadFields []string
-	Required      bool
-	Keys          []string
-	Alg           string
-	Iss           string
-	Aud           string
-	OpaHeaders    map[string]string
-	JwtHeaders    map[string]string
-	ExpiryCheck   bool
+	OpaUrl            string
+	OpaAllowField     string
+	PayloadFields     []string
+	Required          bool
+	Keys              []string
+	Alg               string
+	Iss               string
+	Aud               string
+	OpaHeaders        map[string]string
+	JwtHeaders        map[string]string
+	JwtAlwaysRequired bool
+	JwtExpiryCheck    bool
 }
 
 // CreateConfig creates a new OPA Config
 func CreateConfig() *Config {
 	return &Config{
-		ExpiryCheck: false,
+		JwtAlwaysRequired: false,
+		JwtExpiryCheck:    false,
 	}
 }
 
 // JwtPlugin contains the runtime config
 type JwtPlugin struct {
-	next          http.Handler
-	opaUrl        string
-	opaAllowField string
-	payloadFields []string
-	required      bool
-	jwkEndpoints  []*url.URL
-	keys          map[string]interface{}
-	alg           string
-	iss           string
-	aud           string
-	opaHeaders    map[string]string
-	jwtHeaders    map[string]string
-	expiryCheck   bool
+	next             http.Handler
+	opaUrl           string
+	opaAllowField    string
+	payloadFields    []string
+	required         bool
+	jwkEndpoints     []*url.URL
+	keys             map[string]interface{}
+	alg              string
+	iss              string
+	aud              string
+	opaHeaders       map[string]string
+	jwtHeaders       map[string]string
+	jwtAlwaysPresent bool
+	jwtExpiryCheck   bool
 }
 
 // LogEvent contains a single log entry
@@ -156,18 +159,19 @@ type Response struct {
 // New creates a new plugin
 func New(_ context.Context, next http.Handler, config *Config, _ string) (http.Handler, error) {
 	jwtPlugin := &JwtPlugin{
-		next:          next,
-		opaUrl:        config.OpaUrl,
-		opaAllowField: config.OpaAllowField,
-		payloadFields: config.PayloadFields,
-		required:      config.Required,
-		alg:           config.Alg,
-		iss:           config.Iss,
-		aud:           config.Aud,
-		keys:          make(map[string]interface{}),
-		jwtHeaders:    config.JwtHeaders,
-		opaHeaders:    config.OpaHeaders,
-		expiryCheck:   config.ExpiryCheck,
+		next:             next,
+		opaUrl:           config.OpaUrl,
+		opaAllowField:    config.OpaAllowField,
+		payloadFields:    config.PayloadFields,
+		required:         config.Required,
+		alg:              config.Alg,
+		iss:              config.Iss,
+		aud:              config.Aud,
+		keys:             make(map[string]interface{}),
+		jwtHeaders:       config.JwtHeaders,
+		opaHeaders:       config.OpaHeaders,
+		jwtExpiryCheck:   config.JwtExpiryCheck,
+		jwtAlwaysPresent: config.JwtAlwaysRequired,
 	}
 	if err := jwtPlugin.ParseKeys(config.Keys); err != nil {
 		return nil, err
@@ -325,6 +329,21 @@ func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
 	if err != nil {
 		return err
 	}
+
+	// JWT token required
+	if jwtToken == nil && jwtPlugin.jwtAlwaysPresent {
+		jsonLogEvent, _ := json.Marshal(&LogEvent{
+			Level:   "error",
+			Msg:     fmt.Sprintf("Request without JWT but JWT is mandatory here (jwtAlwaysPresent: %t).", jwtPlugin.jwtAlwaysPresent),
+			Time:    time.Now(),
+			Sub:     sub,
+			Network: network,
+			URL:     request.URL.String(),
+		})
+		fmt.Println(string(jsonLogEvent))
+		return fmt.Errorf("Authorization header with JWT Token is required (Authorization: Bearer <JWT>) !!!")
+	}
+
 	if jwtToken != nil {
 		sub = fmt.Sprint(jwtToken.Payload["sub"])
 
@@ -334,7 +353,7 @@ func (jwtPlugin *JwtPlugin) CheckToken(request *http.Request) error {
 				return err
 			}
 		}
-		if jwtPlugin.expiryCheck {
+		if jwtPlugin.jwtExpiryCheck {
 			if err = jwtToken.verifyExpiry(); err != nil {
 				jsonLogEvent, _ := json.Marshal(&LogEvent{
 					Level:   "error",
